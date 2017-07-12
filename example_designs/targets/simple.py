@@ -94,7 +94,7 @@ class SDSoC(SoCCore):
                          integrated_sram_size=1024,
                          **kwargs)
 
-        self.submodules.crg = _CRG(platform, clk_freq)
+        # self.submodules.crg = _CRG(platform, clk_freq)
 
         self.add_cpu_or_bridge(
            UARTWishboneBridge(platform.request("serial", 0), clk_freq, baudrate=115200)

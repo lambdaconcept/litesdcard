@@ -4,17 +4,18 @@ from litex.build.xilinx.programmer import XC3SProg
 
 
 _io = [
-    ("user_led", 0, Pins("P112"), IOStandard("LVCMOS33"), Drive(24), Misc("SLEW=QUIETIO")),
+    ("user_led", 0, Pins("P112"), IOStandard("LVCMOS18"), Drive(24), Misc("SLEW=QUIETIO")),
 
-    ("clk32", 0, Pins("P94"), IOStandard("LVCMOS33")),
+    ("clk32", 0, Pins("P94"), IOStandard("LVCMOS18")),
+    ("clk50", 0, Pins("P88"), IOStandard("LVCMOS18")),
 
     ("serial", 0,
-        Subsignal("tx", Pins("P105"), IOStandard("LVCMOS33"), Misc("SLEW=SLOW")),
-        Subsignal("rx", Pins("P101"), IOStandard("LVCMOS33"), Misc("PULLUP"))
+        Subsignal("tx", Pins("P105"), IOStandard("LVCMOS18"), Misc("SLEW=SLOW")),
+        Subsignal("rx", Pins("P101"), IOStandard("LVCMOS18"), Misc("PULLUP"))
     ),
     ("serial", 1,
-        Subsignal("tx", Pins("P99"), IOStandard("LVCMOS33"), Misc("SLEW=SLOW")),
-        Subsignal("rx", Pins("P97"), IOStandard("LVCMOS33"), Misc("PULLUP"))
+        Subsignal("tx", Pins("P99"), IOStandard("LVCMOS18"), Misc("SLEW=SLOW")),
+        Subsignal("rx", Pins("P97"), IOStandard("LVCMOS18"), Misc("PULLUP"))
     ),
 
     ("spiflash", 0,
@@ -22,16 +23,16 @@ _io = [
         Subsignal("clk", Pins("P70")),
         Subsignal("mosi", Pins("P64")),
         Subsignal("miso", Pins("P65"), Misc("PULLUP")),
-        IOStandard("LVCMOS33"), Misc("SLEW=FAST")
+        IOStandard("LVCMOS18"), Misc("SLEW=FAST")
     ),
     ("spiflash2x", 0,
         Subsignal("cs_n", Pins("P38")),
         Subsignal("clk", Pins("P70")),
         Subsignal("dq", Pins("P64", "P65")),
-        IOStandard("LVCMOS33"), Misc("SLEW=FAST")
+        IOStandard("LVCMOS18"), Misc("SLEW=FAST")
     ),
 
-    ("sdram_clock", 0, Pins("P32"), IOStandard("LVCMOS33"), Misc("SLEW=FAST")),
+    ("sdram_clock", 0, Pins("P32"), IOStandard("LVCMOS18"), Misc("SLEW=FAST")),
     ("sdram", 0,
         Subsignal("a", Pins("P140 P139 P138 P137 P46 P45 P44",
           "P43 P41 P40 P141 P35 P34")),
@@ -43,15 +44,18 @@ _io = [
         Subsignal("we_n", Pins("P6")),
         Subsignal("dq", Pins("P9 P10 P11 P12 P14 P15 P16 P8 P21 P22 P23 P24 P26 P27 P29 P30")),
         Subsignal("dm", Pins("P7 P17")),
-        IOStandard("LVCMOS33"), Misc("SLEW=FAST")
+        IOStandard("LVCMOS18"), Misc("SLEW=FAST")
     ),
 
     ("sdcard", 0,
-        Subsignal("data", Pins("P48 P66 P61 P58")),
+        Subsignal("data", Pins("P48 P66 P58 P56"), Misc("PULLUP")),
         Subsignal("cmd", Pins("P51"), Misc("PULLUP")),
-        Subsignal("clk", Pins("P56")),
-        Subsignal("cd", Pins("P67")),
-        IOStandard("LVCMOS33"), Misc("SLEW=FAST"),
+        Subsignal("clk", Pins("P61"), Misc("PULLUP")),
+        Subsignal("cd", Pins("P100")),
+        Subsignal("sel", Pins("P67")),
+        Subsignal("clk_fb", Pins("P85")),
+        # IOStandard("LVCMOS33"), Misc("SLEW=FAST"),
+        IOStandard("LVCMOS18"), Misc("SLEW=FAST"),
     ),
 ]
 
@@ -63,8 +67,10 @@ _connectors = [
 
 
 class Platform(XilinxPlatform):
-    default_clk_name = "clk32"
-    default_clk_period = 31.25
+    # default_clk_name = "clk32"
+    # default_clk_period = 31.25
+    default_clk_name = "clk50"
+    default_clk_period = 20.0
 
     def __init__(self):
         XilinxPlatform.__init__(self, "xc6slx9-tqg144-2", _io, _connectors)

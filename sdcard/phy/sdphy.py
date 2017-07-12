@@ -11,6 +11,9 @@ SDCARD_STREAM_DATA = 1
 SDCARD_STREAM_READ = 0
 SDCARD_STREAM_WRITE = 1
 
+SDCARD_STREAM_VOLTAGE_3_3 = 0
+SDCARD_STREAM_VOLTAGE_1_8 = 1
+
 SDCARD_STREAM_XFER = 0
 SDCARD_STREAM_CFG_TIMEOUT_CMD_HH = 1
 SDCARD_STREAM_CFG_TIMEOUT_CMD_HL = 2
@@ -22,6 +25,7 @@ SDCARD_STREAM_CFG_TIMEOUT_DATA_LH = 7
 SDCARD_STREAM_CFG_TIMEOUT_DATA_LL = 8
 SDCARD_STREAM_CFG_BLKSIZE_H = 9
 SDCARD_STREAM_CFG_BLKSIZE_L = 10
+SDCARD_STREAM_CFG_VOLTAGE = 11
 
 SDCARD_STREAM_STATUS_OK = 0
 SDCARD_STREAM_STATUS_TIMEOUT = 1
@@ -44,6 +48,7 @@ class SDCtrl(Module, AutoCSR):
         self.response = CSRStatus(120)
         self.datatimeout = CSRStorage(32)
         self.cmdtimeout = CSRStorage(32)
+        self.voltage = CSRStorage(8)
         self.cmdevt = CSRStatus(32)
         self.dataevt = CSRStatus(32)
         self.blocksize = CSRStorage(16)
@@ -114,6 +119,8 @@ class SDCtrl(Module, AutoCSR):
                 NextState("CFG_TIMEOUT_DATA"),
             ).Elif(self.cmdtimeout.re,
                 NextState("CFG_TIMEOUT_CMD"),
+            ).Elif(self.voltage.re,
+                NextState("CFG_VOLTAGE"),
             ).Elif(self.blocksize.re,
                 NextState("CFG_BLKSIZE"),
             ).Elif(self.command.re,
@@ -179,6 +186,15 @@ class SDCtrl(Module, AutoCSR):
                 If(pos == 1,
                     NextState("IDLE"),
                 ),
+            ),
+        )
+
+        fsm.act("CFG_VOLTAGE",
+            self.source.valid.eq(1),
+            self.source.data.eq(self.voltage.storage[0:8]),
+            mode.eq(SDCARD_STREAM_CFG_VOLTAGE),
+            If(self.source.valid & self.source.ready,
+                NextState("IDLE"),
             ),
         )
 
@@ -376,15 +392,17 @@ class SDPHY(Module, AutoCSR):
 
         for i in range(4):
             self.specials += Instance("IDDR2",
-                p_DDR_ALIGNMENT="C0", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
-                i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
+                p_DDR_ALIGNMENT="C1", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
+                # i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
+                i_C0=pads.clk_fb, i_C1=~pads.clk_fb,
                 i_CE=1, i_S=0, i_R=0,
                 i_D=self.data_t.i[i], o_Q0=data_i1[i], o_Q1=data_i2[i]
             )
 
         self.specials += Instance("IDDR2",
             p_DDR_ALIGNMENT="C1", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
-            i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
+            # i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
+            i_C0=pads.clk_fb, i_C1=~pads.clk_fb,
             i_CE=1, i_S=0, i_R=0,
             i_D=self.cmd_t.i, o_Q0=cmd_i1, o_Q1=cmd_i2
         )
@@ -406,6 +424,7 @@ class SDPHY(Module, AutoCSR):
             cfgcases[SDCARD_STREAM_CFG_TIMEOUT_CMD_HH + i] = NextValue(cfgctimeout[24-(8*i):32-(8*i)], self.sink.data)
         for i in range(2):
             cfgcases[SDCARD_STREAM_CFG_BLKSIZE_H + i] = NextValue(cfgblksize[8-(8*i):16-(8*i)], self.sink.data)
+        cfgcases[SDCARD_STREAM_CFG_VOLTAGE] = NextValue(pads.sel, self.sink.data[0])
 
         wrcases = {} # For command write
         for i in range(8):

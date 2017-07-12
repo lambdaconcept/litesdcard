@@ -261,6 +261,9 @@ def settimeout(comm, clkfreq, timeout):
     comm.write(csr.CSR_SDCTRL_CMDTIMEOUT_ADDR, clktimeout)
     comm.write(csr.CSR_SDCTRL_DATATIMEOUT_ADDR, clktimeout)
 
+def setvoltage(comm, voltage):
+    comm.write(csr.CSR_SDCTRL_VOLTAGE_ADDR, voltage)
+
 def memset(comm, addr, value, length):
     for i in range(length//4):
         comm.write(addr + 4*i, value)
@@ -287,6 +290,8 @@ def incremental(comm, addr):
         comm.write(addr + 4*i, dw & 0xffffffff)
 
 def main(comm, sim=False):
+    setvoltage(comm, 0)
+
     clkfreq = 50000000
     settimeout(comm, clkfreq, 0.1)
 
@@ -296,6 +301,7 @@ def main(comm, sim=False):
 
     # WAIT FOR CARD READY
     s18r = False
+    # s18r = True
     while True:
         cmd55(comm)
         r3,status = acmd41(comm, hcs=True, s18r=s18r)
@@ -311,6 +317,8 @@ def main(comm, sim=False):
     # VOLTAGE SWITCH
     if s18r:
         cmd11(comm)
+        setvoltage(comm, 1)
+        time.sleep(1)
 
     # SEND IDENTIFICATION
     cmd2(comm)
@@ -333,9 +341,9 @@ def main(comm, sim=False):
     acmd51(comm, csr.SRAM_BASE) # SCR register (rouge): 02 35 80 03 00 00 00 00 (Phy Layer Version 3.0)
     dumpall(comm, csr.SRAM_BASE, 8)
     scr = decode_scr(comm, csr.SRAM_BASE)
-    if not scr.cmd_support_sbc:
-        print("Need CMD23 support")
-        return
+    # if not scr.cmd_support_sbc:
+    #     print("Need CMD23 support")
+    #     return
 
     # SEND STATUS
     # cmd55(comm, rca)
@@ -352,9 +360,10 @@ def main(comm, sim=False):
     cmd16(comm, 512)
 
     # # READ ONE BLOCK
-    # memset(comm, csr.SRAM_BASE, 0, 1024)
-    # cmd17(comm, 0, csr.SRAM_BASE)
-    # dumpall(comm, csr.SRAM_BASE, 512)
+    memset(comm, csr.SRAM_BASE, 0, 1024)
+    cmd17(comm, 0, csr.SRAM_BASE)
+    dumpall(comm, csr.SRAM_BASE, 512)
+    return
 
     # READ MULTIPLE BLOCKS
     memset(comm, csr.SRAM_BASE, 0, 1024)
