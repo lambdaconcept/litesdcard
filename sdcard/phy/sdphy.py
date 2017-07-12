@@ -321,382 +321,210 @@ class SDCtrl(Module, AutoCSR):
             ),
         )
 
-class SDPHYModel(Module):
-    def __init__(self, pads):
-        self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
-        self.source = stream.Endpoint([("data", 8), ("ctrl", 8)])
+class SDPHYCFG(Module):
+    def __init__(self):
+        #data timeout
+        self.cfgdtimeout = Signal(32)
+        #command timeout
+        self.cfgctimeout = Signal(32)
+        #blocksize
+        self.cfgblksize = Signal(16)
+        #voltage config: 0: 3.3v, 1: 1.8v
+        self.cfgvoltage = Signal()
 
-        self.comb += [
-            self.sink.ready.eq(1),
-        ]
-
-class SDPHY(Module, AutoCSR):
-    def __init__(self, pads):
-        self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
-        self.source = stream.Endpoint([("data", 8), ("ctrl", 8)])
-
-        clk = Signal()
-        data_i1 = Signal(4)
-        data_i2 = Signal(4)
-        cmd_i1 = Signal()
-        cmd_i2 = Signal()
-
-        tmpread = Signal(4)
-        read = Signal(16)
-        toread = Signal(16)
-        cread = Signal(8)
-        ctoread = Signal(8)
-
-        wrtmpdata = Signal(8)
-        wrsel = Signal(3)
-        wrstarted = Signal()
-        rdtmpdata = Signal(7) # LSB is comb
-        rdsel = Signal(3)
-        sttmpdata = Signal(7) # LSB is comb
-        stsel = Signal(3)
-
-        isinit = Signal()
-        dclkcnt = Signal(8)
-        cclkcnt = Signal(8)
-        ctimeout = Signal(32)
-        dtimeout = Signal(32)
-
-        cfgdtimeout = Signal(32)
-        cfgctimeout = Signal(32)
-        cfgblksize = Signal(16)
-
-        cmddata = Signal()
-        rdwr = Signal()
         mode = Signal(6)
-        status = Signal(4)
 
-        # XXX debug
-        self.sttmpdata = sttmpdata
-        self.data_i2 = data_i2
-        self.stsel = stsel
-        self.cfgdtimeout = cfgdtimeout
-        self.cfgblksize = cfgblksize
-
-        self.data_t = TSTriple(4)
-        self.specials += self.data_t.get_tristate(pads.data)
-
-        self.cmd_t = TSTriple()
-        self.specials += self.cmd_t.get_tristate(pads.cmd)
-
-        self.specials += Instance("ODDR2", p_DDR_ALIGNMENT="NONE",
-            p_INIT=1, p_SRTYPE="SYNC",
-            i_D0=0, i_D1=clk, i_S=0, i_R=0, i_CE=1,
-            i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
-            o_Q=pads.clk
-        )
-
-        for i in range(4):
-            self.specials += Instance("IDDR2",
-                p_DDR_ALIGNMENT="C1", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
-                # i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
-                i_C0=pads.clk_fb, i_C1=~pads.clk_fb,
-                i_CE=1, i_S=0, i_R=0,
-                i_D=self.data_t.i[i], o_Q0=data_i1[i], o_Q1=data_i2[i]
-            )
-
-        self.specials += Instance("IDDR2",
-            p_DDR_ALIGNMENT="C1", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
-            # i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
-            i_C0=pads.clk_fb, i_C1=~pads.clk_fb,
-            i_CE=1, i_S=0, i_R=0,
-            i_D=self.cmd_t.i, o_Q0=cmd_i1, o_Q1=cmd_i2
-        )
-
-        self.comb += [
-            cmddata.eq(self.sink.ctrl[0]),
-            rdwr.eq(self.sink.ctrl[1]),
-            mode.eq(self.sink.ctrl[2:8]),
-
-            self.source.ctrl.eq(Cat(cmddata, status)),
-        ]
-
-        fsm = FSM()
-        self.submodules += fsm
+        self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
 
         cfgcases = {} # PHY configuration
         for i in range(4):
-            cfgcases[SDCARD_STREAM_CFG_TIMEOUT_DATA_HH + i] = NextValue(cfgdtimeout[24-(8*i):32-(8*i)], self.sink.data)
-            cfgcases[SDCARD_STREAM_CFG_TIMEOUT_CMD_HH + i] = NextValue(cfgctimeout[24-(8*i):32-(8*i)], self.sink.data)
+            cfgcases[SDCARD_STREAM_CFG_TIMEOUT_DATA_HH + i] = self.cfgdtimeout[24-(8*i):32-(8*i)].eq(self.sink.data)
+            cfgcases[SDCARD_STREAM_CFG_TIMEOUT_CMD_HH + i] = self.cfgctimeout[24-(8*i):32-(8*i)].eq(self.sink.data)
         for i in range(2):
-            cfgcases[SDCARD_STREAM_CFG_BLKSIZE_H + i] = NextValue(cfgblksize[8-(8*i):16-(8*i)], self.sink.data)
-        cfgcases[SDCARD_STREAM_CFG_VOLTAGE] = NextValue(pads.sel, self.sink.data[0])
+            cfgcases[SDCARD_STREAM_CFG_BLKSIZE_H + i] = self.cfgblksize[8-(8*i):16-(8*i)].eq(self.sink.data)
+        cfgcases[SDCARD_STREAM_CFG_VOLTAGE] = self.cfgvoltage.eq(self.sink.data[0])
 
+        self.comb += [
+            mode.eq(self.sink.ctrl[2:8]),
+            self.sink.ready.eq(self.sink.valid)
+        ]
+
+        self.sync += [
+            If(self.sink.valid,
+               Case(mode, cfgcases),
+            )
+        ]
+
+SDPADS = [
+    ("data", [
+        ("i", 4, DIR_S_TO_M),
+        ("o", 4, DIR_M_TO_S),
+        ("oe", 1, DIR_M_TO_S)
+    ]),
+    ("cmd", [
+        ("i", 1, DIR_S_TO_M),
+        ("o", 1, DIR_M_TO_S),
+        ("oe", 1, DIR_M_TO_S)
+    ]),
+    ("clk", 1, DIR_M_TO_S),
+]
+
+class SDPHYCMDW(Module):
+    def __init__(self):
+        self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
+        self.pads = Record(SDPADS)
+        isinit = Signal()
+        cnt = Signal(8)
+        cnt2 = Signal(8)
+        wrsel = Signal(3)
         wrcases = {} # For command write
+        wrtmpdata = Signal(8)
+
         for i in range(8):
-            wrcases[i] =  self.cmd_t.o.eq(wrtmpdata[7-i])
-        rdcases = {} # For command read
-        for i in range(7): # LSB is comb
-            rdcases[i] = NextValue(rdtmpdata[6-i], cmd_i2)
-        stcases = {} # For status read
-        for i in range(7): # LSB is comb
-            stcases[i] = NextValue(sttmpdata[6-i], data_i2[0])
+            wrcases[i] =  self.pads.cmd.o.eq(wrtmpdata[7-i])
+
+        self.comb += [
+            self.pads.cmd.oe.eq(1),
+        ]
+
+        fsm = FSM()
+        self.submodules.fsm = fsm
 
         fsm.act("IDLE",
-            If(self.sink.valid,
-                If(mode != SDCARD_STREAM_XFER, # Config mode
-                    Case(mode, cfgcases),
-                    self.sink.ready.eq(1),
-                ).Elif(cmddata == SDCARD_STREAM_CMD, # Command mode
-                    clk.eq(1),
-                    NextValue(ctimeout, 0),
-                    If(~isinit,
-                        NextState("INIT"),
-                    ).Elif(rdwr == SDCARD_STREAM_WRITE,
-                        NextValue(wrtmpdata, self.sink.data),
-                        NextState("CMD_WRITE"),
-                        NextValue(wrsel, 0),
-                    ).Elif(rdwr == SDCARD_STREAM_READ,
-                        NextValue(ctoread, self.sink.data),
-                        NextValue(cread, 0),
-                        NextState("CMD_READSTART"),
-                        NextValue(rdsel, 0),
-                    ),
-                ).Elif(cmddata == SDCARD_STREAM_DATA, # Data mode
-                    clk.eq(1),
-                    NextValue(dtimeout, 0),
-                    If(rdwr == SDCARD_STREAM_WRITE,
-                        If(wrstarted,
-                            NextValue(self.data_t.o, self.sink.data[4:8]),
-                            NextValue(self.data_t.oe, 1),
-                            NextState("DATA_WRITE"),
-                        ).Else(
-                            NextValue(self.data_t.o, 0),
-                            NextValue(self.data_t.oe, 1),
-                            NextState("DATA_WRITESTART"),
-                        )
-                    ).Elif(rdwr == SDCARD_STREAM_READ,
-                        NextValue(toread, cfgblksize + 8), # Read 1 block
-                        NextValue(read, 0),
-                        NextValue(self.data_t.oe, 0),
-                        NextState("DATA_READSTART")
-                    ),
-                ),
-            ),
+                If(self.sink.valid,
+                   If(~isinit,
+                      NextState("INIT")
+                   ).Else(
+                       self.pads.clk.eq(1),
+                       self.pads.cmd.o.eq(self.sink.data[7]),
+                       NextValue(wrtmpdata, self.sink.data),
+                       NextValue(wrsel, 1),
+                       NextState("CMD_WRITE")
+                   )
+                )
         )
 
         fsm.act("INIT",
-            clk.eq(1),
-            self.cmd_t.oe.eq(1),
-            self.cmd_t.o.eq(1),
-            If(cclkcnt < 80,
-                NextValue(cclkcnt, cclkcnt + 1),
-                NextValue(self.data_t.oe, 1),
-                NextValue(self.data_t.o, 0xf),
+            self.pads.clk.eq(1),
+            self.pads.cmd.o.eq(1),
+            If(cnt < 80,
+                NextValue(cnt, cnt + 1),
+                NextValue(self.pads.data.oe, 1),
+                NextValue(self.pads.data.o, 0xf),
             ).Else(
-                NextValue(cclkcnt, 0),
+                NextValue(cnt, 0),
                 NextValue(isinit, 1),
-                NextValue(self.data_t.oe, 0),
-                NextState("IDLE"),
-            ),
-        )
-
-        fsm.act("TIMEOUT",
-            self.source.valid.eq(1),
-            self.source.data.eq(0),
-            status.eq(SDCARD_STREAM_STATUS_TIMEOUT),
-            self.source.last.eq(1),
-            If(self.source.valid & self.source.ready,
+                NextValue(self.pads.data.oe, 0),
                 NextState("IDLE"),
             ),
         )
 
         fsm.act("CMD_WRITE",
-            self.cmd_t.oe.eq(1),
             Case(wrsel, wrcases),
             NextValue(wrsel, wrsel + 1),
-            If(wrsel == 7,
+            If(wrsel == 0,
                 If(self.sink.last,
-                    clk.eq(1),
+                    self.pads.clk.eq(1),
                     NextState("CMD_CLK8"),
                 ).Else(
                     self.sink.ready.eq(1),
                     NextState("IDLE"),
                 ),
             ).Else(
-                clk.eq(1),
-            ),
-        )
-
-        fsm.act("CMD_READSTART",
-            self.cmd_t.oe.eq(0),
-            clk.eq(1),
-            NextValue(ctimeout, ctimeout + 1),
-            If(cmd_i2 == 0,
-                NextState("CMD_READ"),
-                NextValue(rdsel, 1),
-                NextValue(rdtmpdata, 0),
-            ).Elif(ctimeout > (cfgctimeout),
-                NextState("TIMEOUT"),
-            ),
-        )
-
-        fsm.act("CMD_READ",
-            self.cmd_t.oe.eq(0),
-            Case(rdsel, rdcases),
-            If(rdsel == 7,
-                self.source.valid.eq(1),
-                self.source.data.eq(Cat(cmd_i2, rdtmpdata)),
-                status.eq(SDCARD_STREAM_STATUS_OK),
-                self.source.last.eq(cread == ctoread),
-                If(self.source.valid & self.source.ready,
-                    NextValue(cread, cread + 1),
-                    NextValue(rdsel, rdsel + 1),
-                    If(cread == ctoread,
-                        If(self.sink.last,
-                            clk.eq(1),
-                            NextState("CMD_CLK8"),
-                        ).Else(
-                            self.sink.ready.eq(1),
-                            NextState("IDLE"),
-                        ),
-                    ).Else(
-                        clk.eq(1),
-                    ),
-                ),
-            ).Else(
-                NextValue(rdsel, rdsel + 1),
-                clk.eq(1),
+                self.pads.clk.eq(1),
             ),
         )
 
         fsm.act("CMD_CLK8",
-            self.cmd_t.oe.eq(1),
-            self.cmd_t.o.eq(1),
-            If(cclkcnt < 7,
-                NextValue(cclkcnt, cclkcnt + 1),
-                clk.eq(1),
+            self.pads.cmd.o.eq(1),
+            If(cnt2 < 7,
+                NextValue(cnt2, cnt2 + 1),
+                self.pads.clk.eq(1),
             ).Else(
-                NextValue(cclkcnt, 0),
+                NextValue(cnt2, 0),
                 self.sink.ready.eq(1),
                 NextState("IDLE"),
             ),
         )
 
-        fsm.act("DATA_WRITESTART",
-            clk.eq(1),
-            NextValue(self.data_t.o, self.sink.data[4:8]),
-            NextValue(self.data_t.oe, 1),
-            NextState("DATA_WRITE"),
-            NextValue(wrstarted, 1),
+
+class SDPHY(Module):
+    def __init__(self, pads):
+
+        sdpads = Record(SDPADS)
+
+        cmddata = Signal()
+        rdwr = Signal()
+        mode = Signal(6)
+
+        #stream sink
+        self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
+        #stream source
+        self.source = stream.Endpoint([("data", 8), ("ctrl", 8)])
+        #data tristate
+        self.data_t = TSTriple(4)
+        self.specials += self.data_t.get_tristate(pads.data)
+        #cmd tristate
+        self.cmd_t = TSTriple()
+        self.specials += self.cmd_t.get_tristate(pads.cmd)
+
+        #clk output
+        self.specials += Instance("ODDR2", p_DDR_ALIGNMENT="NONE",
+            p_INIT=1, p_SRTYPE="SYNC",
+            i_D0=0, i_D1=sdpads.clk, i_S=0, i_R=0, i_CE=1,
+            i_C0=ClockSignal("sys"), i_C1=~ClockSignal("sys"),
+            o_Q=pads.clk
         )
 
-        fsm.act("DATA_WRITE",
-            clk.eq(1),
-            NextValue(self.data_t.o, self.sink.data[0:4]),
-            NextValue(self.data_t.oe, 1),
-            If(self.sink.last,
-                NextState("DATA_WRITESTOP")
-            ).Else(
-                self.sink.ready.eq(1),
-                NextState("IDLE"),
-            ),
-        )
+        self.comb += [
+            self.cmd_t.oe.eq(sdpads.cmd.oe),
+            self.cmd_t.o.eq(sdpads.cmd.o),
+            sdpads.cmd.i.eq(self.cmd_t.i),
 
-        fsm.act("DATA_WRITESTOP",
-            clk.eq(1),
-            NextValue(self.data_t.o, 0xf),
-            NextValue(self.data_t.oe, 1),
-            NextValue(wrstarted, 0),
-            NextState("DATA_GETSTATUS_WAIT0"),
-        )
+            self.data_t.oe.eq(sdpads.data.oe),
+            self.data_t.o.eq(sdpads.data.o),
+            sdpads.data.i.eq(self.data_t.i)
+        ]
 
-        fsm.act("DATA_READSTART",
-            clk.eq(1),
-            NextValue(self.data_t.oe, 0),
-            NextValue(dtimeout, dtimeout + 1),
-            If(data_i2 == 0,
-                NextState("DATA_READ1"),
-            ).Elif(dtimeout > (cfgdtimeout),
-                NextState("TIMEOUT"),
-            ),
-        )
+        self.comb += [
+            cmddata.eq(self.sink.ctrl[0]),
+            rdwr.eq(self.sink.ctrl[1]),
+            mode.eq(self.sink.ctrl[2:8]),
+        ]
 
-        fsm.act("DATA_READ1",
-            clk.eq(1),
-            NextValue(self.data_t.oe, 0),
-            NextValue(tmpread, data_i2),
-            NextState("DATA_READ2"),
-        )
+        self.submodules.cfg = SDPHYCFG()
+        self.submodules.cmdw = SDPHYCMDW()
 
-        fsm.act("DATA_READ2",
-            NextValue(self.data_t.oe, 0),
-            self.source.data.eq(Cat(data_i2, tmpread)),
-            status.eq(SDCARD_STREAM_STATUS_OK),
-            self.source.valid.eq(1),
-            self.source.last.eq(read == toread),
+        fsm = FSM()
+        self.submodules.fsm = fsm
 
-            If(self.source.valid & self.source.ready,
-                clk.eq(1),
-                NextValue(read, read + 1),
-                If(read == toread,
-                    If(self.sink.last,
-                        NextState("DATA_CLK40"),
-                    ).Else(
-                        self.sink.ready.eq(1),
-                        NextState("IDLE"),
-                    ),
+        fsm.act("IDLE",
+            If(self.sink.valid,
+               # Configuration mode
+               If(mode != SDCARD_STREAM_XFER,
+                  self.sink.connect(self.cfg.sink),
+                  sdpads.clk.eq(0),
+                  sdpads.cmd.oe.eq(1),
+                  sdpads.cmd.o.eq(1),
+                  # Command mode
+                ).Elif(cmddata == SDCARD_STREAM_CMD,
+                       If(rdwr == SDCARD_STREAM_WRITE,
+                          self.sink.connect(self.cmdw.sink),
+                          self.cmdw.pads.connect(sdpads)
+                       ).Else(
+                       )
                 ).Else(
-                    NextState("DATA_READ1"),
+                    sdpads.clk.eq(0),
+                    sdpads.cmd.oe.eq(1),
+                    sdpads.cmd.o.eq(1),
                 )
+            ).Else(
+                sdpads.clk.eq(0),
+                sdpads.cmd.oe.eq(1),
+                sdpads.cmd.o.eq(1),
             )
         )
 
-        fsm.act("DATA_CLK40",
-            NextValue(self.data_t.o, 0xf),
-            NextValue(self.data_t.oe, 1),
-            If(dclkcnt < 40,
-                NextValue(dclkcnt, dclkcnt + 1),
-                clk.eq(1),
-            ).Else(
-                NextValue(dclkcnt, 0),
-                self.sink.ready.eq(1),
-                NextState("IDLE")
-            ),
-        )
-
-        fsm.act("DATA_CLK40_BUSY",
-            NextValue(self.data_t.oe, 0),
-            If((dclkcnt < 40) | ~data_i2[0],
-                If(dclkcnt < 40,
-                    NextValue(dclkcnt, dclkcnt + 1),
-                ),
-                clk.eq(1),
-            ).Else(
-                NextValue(dclkcnt, 0),
-                self.sink.ready.eq(1),
-                NextState("IDLE"),
-            ),
-        )
-
-        fsm.act("DATA_GETSTATUS_WAIT0",
-            clk.eq(1),
-            NextValue(self.data_t.oe, 0),
-            NextState("DATA_GETSTATUS_WAIT1"),
-        )
-        fsm.act("DATA_GETSTATUS_WAIT1",
-            clk.eq(1),
-            NextValue(self.data_t.oe, 0),
-            NextState("DATA_GETSTATUS"),
-        )
-
-        fsm.act("DATA_GETSTATUS",
-            Case(stsel, stcases),
-            If(stsel == 7,
-                self.source.valid.eq(1),
-                self.source.data.eq(0),
-                status.eq(Cat(data_i2[0], sttmpdata)[1:4]),
-                self.source.last.eq(1),
-                If(self.source.valid & self.source.ready,
-                    NextValue(stsel, 0),
-                    NextState("DATA_CLK40_BUSY"),
-                ),
-            ).Else(
-                NextValue(stsel, stsel + 1),
-                clk.eq(1),
-            ),
+        fsm.act("TOTO",
+            NextState("IDLE")
         )
