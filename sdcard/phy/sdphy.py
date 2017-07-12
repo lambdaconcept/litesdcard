@@ -369,6 +369,98 @@ SDPADS = [
     ("clk", 1, DIR_M_TO_S),
 ]
 
+class SDPHYCMDR(Module):
+    def __init__(self, cfg):
+
+        self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
+        self.source = stream.Endpoint([("data", 8), ("ctrl", 8)])
+        self.pads = Record(SDPADS)
+
+        ctimeout = Signal(32)
+        rdsel = Signal(3)
+        rdtmpdata = Signal(8)
+
+        cread = Signal(8)
+        ctoread = Signal(8)
+        cnt = Signal(8)
+
+        status = Signal(4)
+
+        self.comb += [
+            status.eq(self.sink.ctrl[1:5])
+        ]
+
+        fsm.act("IDLE",
+            If(self.sink.valid,
+                NextState("CMD_READSTART")
+            )
+        )
+
+        fsm.act("CMD_READSTART",
+            self.pads.cmd.oe.eq(0),
+            self.pads.clk.eq(1),
+            NextValue(ctimeout, ctimeout + 1),
+            If(self.pads.cmd.i == 0,
+               NextState("CMD_READ"),
+               NextValue(rdsel, 1),
+               NextValue(rdtmpdata, 0),
+            ).Elif(ctimeout > (cfg.cfgctimeout),
+                NextState("TIMEOUT"),
+            ),
+        )
+
+        fsm.act("CMD_READ",
+            self.pads.cmd.oe.eq(0),
+            Case(rdsel, rdcases),
+            If(rdsel == 7,
+                self.source.valid.eq(1),
+                self.source.data.eq(Cat(self.pads.cmd.i, rdtmpdata)),
+                status.eq(SDCARD_STREAM_STATUS_OK),
+                self.source.last.eq(cread == ctoread),
+                If(self.source.valid & self.source.ready,
+                    NextValue(cread, cread + 1),
+                    NextValue(rdsel, rdsel + 1),
+                    If(cread == ctoread,
+                        If(self.sink.last,
+                            self.pads.clk.eq(1),
+                            NextState("CMD_CLK8"),
+                        ).Else(
+                            self.sink.ready.eq(1),
+                            NextState("IDLE"),
+                        ),
+                    ).Else(
+                        self.pads.clk.eq(1),
+                    ),
+                ),
+            ).Else(
+                NextValue(rdsel, rdsel + 1),
+                self.pads.clk.eq(1),
+            ),
+        )
+
+        fsm.act("CMD_CLK8",
+            self.pads.cmd.oe.eq(1),
+            self.pads.cmd.o.eq(1),
+            If(cnt < 7,
+                NextValue(cnt, cnt + 1),
+                self.pads.clk.eq(1),
+            ).Else(
+                NextValue(cnt, 0),
+                self.sink.ready.eq(1),
+                NextState("IDLE"),
+            ),
+        )
+
+        fsm.act("TIMEOUT",
+            self.source.valid.eq(1),
+            self.source.data.eq(0),
+            status.eq(SDCARD_STREAM_STATUS_TIMEOUT),
+            self.source.last.eq(1),
+            If(self.source.valid & self.source.ready,
+                NextState("IDLE"),
+            ),
+        )
+
 class SDPHYCMDW(Module):
     def __init__(self):
         self.sink = stream.Endpoint([("data", 8), ("ctrl", 8)])
@@ -447,7 +539,6 @@ class SDPHYCMDW(Module):
             ),
         )
 
-
 class SDPHY(Module):
     def __init__(self, pads):
 
@@ -479,11 +570,11 @@ class SDPHY(Module):
         self.comb += [
             self.cmd_t.oe.eq(sdpads.cmd.oe),
             self.cmd_t.o.eq(sdpads.cmd.o),
-            sdpads.cmd.i.eq(self.cmd_t.i),
+            #sdpads.cmd.i.eq(self.cmd_t.i),
 
             self.data_t.oe.eq(sdpads.data.oe),
             self.data_t.o.eq(sdpads.data.o),
-            sdpads.data.i.eq(self.data_t.i)
+            #sdpads.data.i.eq(self.data_t.i)
         ]
 
         self.comb += [
@@ -494,6 +585,7 @@ class SDPHY(Module):
 
         self.submodules.cfg = SDPHYCFG()
         self.submodules.cmdw = SDPHYCMDW()
+        self.submodules.cmdr = SDPHYCMDR(self.cfg)
 
         fsm = FSM()
         self.submodules.fsm = fsm
@@ -511,7 +603,9 @@ class SDPHY(Module):
                        If(rdwr == SDCARD_STREAM_WRITE,
                           self.sink.connect(self.cmdw.sink),
                           self.cmdw.pads.connect(sdpads)
-                       ).Else(
+                       ).Elif(rdwr == SDCARD_STREAM_READ,
+                          self.sink.connect(self.cmdr.sink),
+                          self.cmdr.pads.connect(sdpads)
                        )
                 ).Else(
                     sdpads.clk.eq(0),
