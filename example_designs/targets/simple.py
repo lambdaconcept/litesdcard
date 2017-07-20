@@ -20,6 +20,7 @@ from sdcard.phy.sdphy import SDPHY, SDCtrl
 from sdcard.frontend.ram import RAMReader, RAMWriter, RAMWrAddr
 from sdcard.core.downc import Stream32to8
 from sdcard.core.upc import Stream8to32
+from sdcard.core.clocker import SDClocker
 
 class _CRG(Module):
     def __init__(self, platform, clk_freq):
@@ -71,6 +72,18 @@ class _CRG(Module):
                                   i_C0=self.cd_sys.clk, i_C1=~self.cd_sys.clk,
                                   o_Q=platform.request("sdram_clock"))
 
+class _CRGsys(Module, AutoCSR):
+    def __init__(self, platform):
+        self.clock_domains.cd_sys = ClockDomain()
+        self.comb += [
+            self.cd_sys.clk.eq(platform.request("clk50")),
+        ]
+        self.clock_domains.cd_sd = ClockDomain()
+        self.submodules.sdclocker = SDClocker()
+        self.comb += [
+            self.cd_sd.clk.eq(self.sdclocker.clk),
+        ]
+
 class SDSoC(SoCCore):
     default_platform = "papilio_pro"
     csr_map = {
@@ -91,20 +104,30 @@ class SDSoC(SoCCore):
                          with_uart=False,
                          with_timer=False,
                          ident="Generic LiteX SoC",
-                         integrated_sram_size=1024,
+                         integrated_sram_size=512, # XXX tmp !
                          **kwargs)
 
         # self.submodules.crg = _CRG(platform, clk_freq)
+        self.submodules.crg = _CRGsys(platform)
 
         self.add_cpu_or_bridge(
            UARTWishboneBridge(platform.request("serial", 0), clk_freq, baudrate=115200)
         )
         self.add_wb_master(self.cpu_or_bridge.wishbone)
 
-        self.submodules.sdphy = SDPHY(platform.request('sdcard'))
+        # SDPHY
+        self.submodules.sdphy = ClockDomainsRenamer("sd")(SDPHY(platform.request('sdcard')))
         self.submodules.sdctrl = SDCtrl()
 
-        # self.submodules.uart = RS232PHY(platform.request("serial", 1), clk_freq, baudrate=115200)
+        # ASYNC FIFOs SDPHY <-> SDCTRL
+        self.submodules.fifo_c2p = ClockDomainsRenamer({"write": "sys", "read": "sd"})(
+            stream.AsyncFIFO(self.sdctrl.source.description, 2)
+        )
+        self.submodules.fifo_p2c = ClockDomainsRenamer({"write": "sd", "read": "sys"})(
+            stream.AsyncFIFO(self.sdphy.source.description, 2)
+        )
+
+        # RAM Interface
         self.submodules.ramreader = RAMReader()
         self.submodules.ramwriter = RAMWriter()
         self.submodules.ramwraddr = RAMWrAddr()
@@ -115,8 +138,10 @@ class SDSoC(SoCCore):
         self.submodules.stream8to32 = Stream8to32()
 
         self.comb += [
-            self.sdctrl.source.connect(self.sdphy.sink),
-            self.sdphy.source.connect(self.sdctrl.sink),
+            self.sdctrl.source.connect(self.fifo_c2p.sink),
+            self.fifo_c2p.source.connect(self.sdphy.sink),
+            self.sdphy.source.connect(self.fifo_p2c.sink),
+            self.fifo_p2c.source.connect(self.sdctrl.sink),
 
             self.sdctrl.rsource.connect(self.stream8to32.sink),
             self.stream8to32.source.connect(self.ramwraddr.sink),
@@ -140,31 +165,36 @@ class LiteSoC(SDSoC):
         self.add_wb_master(self.bridge.wishbone)
 
         analyzer = LiteScopeAnalyzer([
-            # self.sdctrl.crc16checker.valid,
-            # self.sdctrl.crc16checker.fifo[0],
-            # self.sdctrl.crc16checker.fifo[1],
-            # self.sdctrl.crc16checker.fifo[2],
-            # self.sdctrl.crc16checker.fifo[3],
-            # self.sdctrl.crc16checker.crctmp[0],
-            # self.sdctrl.crc16checker.crctmp[1],
-            # self.sdctrl.crc16checker.crctmp[2],
-            # self.sdctrl.crc16checker.crctmp[3],
-            # self.sdctrl.crc16checker.sink.valid,
-            # self.sdctrl.crc16checker.sink.data,
-            # self.sdctrl.crc16checker.sink.last,
-            # self.sdctrl.crc16checker.sink.ready,
-            self.sdphy.sttmpdata,
-            self.sdphy.data_i2,
-            self.sdphy.stsel,
-            self.sdphy.sink.valid,
-            self.sdphy.sink.data,
-            self.sdphy.sink.last,
-            self.sdphy.sink.ready,
-        ], 1024)
+            self.sdphy.cmdr.sink.valid,
+            self.sdphy.cmdr.sink.data,
+            self.sdphy.cmdr.sink.ctrl,
+            self.sdphy.cmdr.sink.last,
+            self.sdphy.cmdr.sink.ready,
+            self.sdphy.cmdr.source.valid,
+            self.sdphy.cmdr.source.data,
+            self.sdphy.cmdr.source.ctrl,
+            self.sdphy.cmdr.source.last,
+            self.sdphy.cmdr.source.ready,
+            self.sdphy.cmdr.cmdrfb.sel,
+            self.sdphy.cmdr.cmdrfb.data,
+            self.sdphy.cmdr.cmdrfb.enable,
+            self.sdphy.cmdr.cmdrfb.pads.cmd.i,
+            self.sdphy.cmdr.cmdrfb.source.valid,
+            self.sdphy.cmdr.cmdrfb.source.data,
+            self.sdphy.cmdr.cmdrfb.source.last,
+            self.sdphy.cmdr.cmdrfb.source.ready,
+            self.sdphy.sdpads.cmd.i,
+            self.sdphy.sdpads.cmd.o,
+            self.sdphy.sdpads.cmd.oe,
+            self.sdphy.sdpads.data.i,
+            self.sdphy.sdpads.data.o,
+            self.sdphy.sdpads.data.oe,
+            self.sdphy.sdpads.clk,
+        ], 256)
         self.submodules.analyzer = analyzer
 
     def do_exit(self, vns):
-        self.analyzer.export_csv(vns, "analyzer.csv")
+        self.analyzer.export_csv(vns, "build/analyzer.csv")
 
 default_subtarget = SDSoC
 
@@ -174,14 +204,16 @@ def main():
     soc_core_args(parser)
     args = parser.parse_args()
 
-    import papilio_pro
-    platform = papilio_pro.Platform()
+    # import papilio_pro
+    # platform = papilio_pro.Platform()
+    import lx16ddr
+    platform = lx16ddr.Platform()
 
-    soc = SDSoC(platform, **soc_core_argdict(args))
-    # soc = LiteSoC(platform, **soc_core_argdict(args))
+    # soc = SDSoC(platform, **soc_core_argdict(args))
+    soc = LiteSoC(platform, **soc_core_argdict(args))
     builder = Builder(soc, **builder_argdict(args))
     vns = builder.build()
-    # soc.do_exit(vns)
+    soc.do_exit(vns)
 
 if __name__ == "__main__":
     main()

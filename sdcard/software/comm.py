@@ -6,7 +6,7 @@ import time
 from litex.soc.tools.remote.comm_uart import CommUART
 from litex.soc.tools.remote.comm_udp import CommUDP
 
-litesdcard_path = "../../"
+litesdcard_path = "."
 sys.path.append(litesdcard_path) # XXX
 
 from sdcard.phy.sdphy import *
@@ -264,6 +264,9 @@ def settimeout(comm, clkfreq, timeout):
 def setvoltage(comm, voltage):
     comm.write(csr.CSR_SDCTRL_VOLTAGE_ADDR, voltage)
 
+def setfreqdiv(comm, div):
+    comm.write(csr.CSR_CRG_SDCLOCKER_DIVIDER_ADDR, div)
+
 def memset(comm, addr, value, length):
     for i in range(length//4):
         comm.write(addr + 4*i, value)
@@ -290,9 +293,15 @@ def incremental(comm, addr):
         comm.write(addr + 4*i, dw & 0xffffffff)
 
 def main(comm, sim=False):
+    debug(comm)
+    print('sleep')
+    time.sleep(3)
+
+    setfreqdiv(comm, 32)
     setvoltage(comm, 0)
 
-    clkfreq = 50000000
+    # clkfreq = 50000000
+    clkfreq = 50000000//32
     settimeout(comm, clkfreq, 0.1)
 
     # RESET CARD
@@ -405,6 +414,7 @@ if __name__ == '__main__':
 
     if sys.argv[1] == 'uart':
         comm = CommUART('/dev/ttyUSB1', baudrate=115200, debug=False)
+        # comm = CommUART('/dev/ttyUSB2', baudrate=3000000, debug=False)
         sim = False
     else:
         comm = CommUDP(server="192.168.2.50", port=20000, csr_csv="build/csr.csv", csr_data_width=32)

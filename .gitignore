@@ -1,3 +1,4 @@
 example_designs/build/
 generated/
 __pycache__/
+*.swp
