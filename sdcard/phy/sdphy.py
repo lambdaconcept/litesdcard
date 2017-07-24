@@ -231,8 +231,13 @@ class SDCtrl(Module, AutoCSR):
             cmddata.eq(SDCARD_STREAM_CMD),
             rdwr.eq(SDCARD_STREAM_READ),
             mode.eq(SDCARD_STREAM_XFER),
+            If(self.source.valid & self.source.ready, # In async fifo
+                NextState("WAIT_RESP"),
+            ),
+        )
 
-            If(self.sink.valid,
+        fsm.act("WAIT_RESP",
+            If(self.sink.valid, # Wait for resp or timeout coming from phy
                 self.sink.ready.eq(1),
                 If(self.sink.ctrl[0] == SDCARD_STREAM_CMD,
                     If(status == SDCARD_STREAM_STATUS_TIMEOUT,
