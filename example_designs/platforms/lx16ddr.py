@@ -45,6 +45,16 @@ _io = [
     ),
 
     ("sdcard", 0,
+        Subsignal("data", Pins("K15 K14 M15 K11"), Misc("PULLUP")),
+        Subsignal("cmd", Pins("L16"), Misc("PULLUP")),
+        Subsignal("clk", Pins("J11"), Misc("PULLUP")),
+        Subsignal("cd", Pins("N14")),
+        Subsignal("sel", Pins("H13")),
+        Subsignal("clk_fb", Pins("J14")),
+        IOStandard("LVCMOS18"), Misc("SLEW=FAST"),
+    ),
+
+    ("sdcard", 1, #
         Subsignal("data", Pins("K16 J13 M16 K12"), Misc("PULLUP")),
         Subsignal("cmd", Pins("L14"), Misc("PULLUP")),
         Subsignal("clk", Pins("J12"), Misc("PULLUP")),
@@ -53,6 +63,7 @@ _io = [
         Subsignal("clk_fb", Pins("J16")),
         IOStandard("LVCMOS18"), Misc("SLEW=FAST"),
     ),
+
 ]
 
 _connectors = [

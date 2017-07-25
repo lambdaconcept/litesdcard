@@ -332,7 +332,7 @@ def main(comm, sim=False):
     # SEND IDENTIFICATION
     cmd2(comm)
 
-    # SET RELATIVE CARD CSRESS
+    # SET RELATIVE CARD ADDRESS
     r6,status = cmd3(comm)
     rca = decode_rca(r6)
 
@@ -414,7 +414,7 @@ if __name__ == '__main__':
 
     if sys.argv[1] == 'uart':
         comm = CommUART('/dev/ttyUSB1', baudrate=115200, debug=False)
-        # comm = CommUART('/dev/ttyUSB2', baudrate=3000000, debug=False)
+        #comm = CommUART('/dev/ttyUSB2', baudrate=3000000, debug=False)
         sim = False
     else:
         comm = CommUDP(server="192.168.2.50", port=20000, csr_csv="build/csr.csv", csr_data_width=32)
