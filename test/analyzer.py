@@ -16,10 +16,10 @@ analyzer = LiteScopeAnalyzerDriver(wb.regs, "analyzer", debug=True, config_csv="
 # analyzer.configure_trigger(cond={"sdctrl_crc16checker_sink_last": 1, "sdctrl_crc16checker_sink_payload_data": 0x00})
 # analyzer.configure_trigger(cond={"sdphy_cmdr_enable": 1})
 # analyzer.configure_trigger(cond={"sdctrl_sink_sink_valid": 1, "sdctrl_sink_sink_payload_ctrl": 0x01})
-analyzer.configure_trigger(cond={"sdphy_data_t_i": 2})
+analyzer.configure_trigger(cond={"sdphy_cmdr_sdphycmdrfb_source_valid": 1})
 # analyzer.configure_trigger(cond={"sdphy_datar_sink_sink_valid": 1})
 analyzer.configure_subsampler(1)
-analyzer.run(offset=20, length=2048) # 10000
+analyzer.run(offset=300, length=2048) # 10000
 while not analyzer.done():
     pass
 analyzer.upload()

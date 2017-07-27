@@ -443,11 +443,11 @@ class SDPHYCMDR(Module):
 
         enable = Signal()
 
-        # self.submodules.cmdrfb = ClockDomainsRenamer("fb")(SDPHYCMDRFB(self.pads, enable))
-        self.submodules.cmdrfb = SDPHYCMDRFB(self.pads, enable)
-        # fifo = stream.AsyncFIFO([("data", 8)], 2)
-        # self.submodules.fifo = ClockDomainsRenamer({"write": "fb", "read": "sys"})(fifo)
-        self.submodules.fifo = stream.SyncFIFO(self.cmdrfb.source.description, 2)
+        # XXX working with sd
+        self.submodules.cmdrfb = ClockDomainsRenamer("fb")(SDPHYCMDRFB(self.pads, enable))
+        self.submodules.fifo = ClockDomainsRenamer({"write": "fb", "read": "sd"})(
+            stream.AsyncFIFO(self.cmdrfb.source.description, 2)
+        )
 
         self.comb += [
             self.cmdrfb.source.connect(self.fifo.sink),
@@ -829,6 +829,7 @@ class SDPHY(Module):
         sdpads = Record(SDPADS)
         # debug
         self.sdpads = sdpads
+        self.pads = pads
 
         cmddata = Signal()
         rdwr = Signal()
