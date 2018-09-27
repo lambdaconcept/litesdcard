@@ -1,5 +1,6 @@
-from litex.gen import *
-from litex.gen.genlib.cdc import MultiReg, PulseSynchronizer
+from migen import *
+from migen.genlib.cdc import MultiReg, BusSynchronizer, PulseSynchronizer
+
 from litex.soc.interconnect import stream
 from litex.soc.interconnect.csr import *
 
@@ -21,7 +22,7 @@ class SDCore(Module, AutoCSR):
         self.dataevt = CSRStatus(32)
 
         self.blocksize = CSRStorage(16)
-        self.blockcount = CSRStorage(16)
+        self.blockcount = CSRStorage(32)
 
         self.datatimeout = CSRStorage(32, reset=2**16)
         self.cmdtimeout = CSRStorage(32, reset=2**16)
@@ -38,21 +39,32 @@ class SDCore(Module, AutoCSR):
         cmdevt = Signal(32)
         dataevt = Signal(32)
         blocksize = Signal(16)
-        blockcount = Signal(16)
+        blockcount = Signal(32)
         datatimeout = Signal(32)
         cmdtimeout = Signal(32)
 
-
+        # sys to sd cdc
         self.specials += [
             MultiReg(self.argument.storage, argument, "sd"),
             MultiReg(self.command.storage, command, "sd"),
-            MultiReg(response, self.response.status, "sys"),
-            MultiReg(cmdevt, self.cmdevt.status, "sys"),
-            MultiReg(dataevt, self.dataevt.status, "sys"),
             MultiReg(self.blocksize.storage, blocksize, "sd"),
             MultiReg(self.blockcount.storage, blockcount, "sd"),
             MultiReg(self.datatimeout.storage, datatimeout, "sd"),
             MultiReg(self.cmdtimeout.storage, cmdtimeout, "sd")
+        ]
+
+        # sd to sys cdc
+        response_cdc = BusSynchronizer(120, "sd", "sys")
+        cmdevt_cdc = BusSynchronizer(32, "sd", "sys")
+        dataevt_cdc = BusSynchronizer(32, "sd", "sys")
+        self.submodules += response_cdc, cmdevt_cdc, dataevt_cdc
+        self.comb += [
+            response_cdc.i.eq(response),
+            self.response.status.eq(response_cdc.o),
+            cmdevt_cdc.i.eq(cmdevt),
+            self.cmdevt.status.eq(cmdevt_cdc.o),
+            dataevt_cdc.i.eq(dataevt),
+            self.dataevt.status.eq(dataevt_cdc.o)
         ]
 
         self.submodules.new_command = PulseSynchronizer("sys", "sd")
@@ -99,7 +111,7 @@ class SDCore(Module, AutoCSR):
         dataxfer = Signal(2)
         cmddone = Signal(reset=1)
         datadone = Signal(reset=1)
-        blkcnt = Signal(16)
+        blkcnt = Signal(32)
         pos = Signal(2)
 
         cerrtimeout = Signal()

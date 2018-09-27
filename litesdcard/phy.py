@@ -1,5 +1,6 @@
-from litex.gen import *
-from litex.gen.genlib.cdc import MultiReg, PulseSynchronizer
+from migen import *
+from migen.genlib.cdc import MultiReg, PulseSynchronizer
+
 from litex.soc.interconnect import stream
 from litex.soc.interconnect.csr import *
 
@@ -250,10 +251,11 @@ class SDPHYDATAR(Module):
         datarfb_reset = Signal()
 
         self.submodules.datarfb = SDPHYRFB(pads.data.i, True)
-        self.submodules.fifo = ClockDomainsRenamer({"write": "sd_fb", "read": "sd"})(
+        self.submodules.cdc = ClockDomainsRenamer({"write": "sd_fb", "read": "sd"})(
             stream.AsyncFIFO(self.datarfb.source.description, 4)
         )
-        self.comb += self.datarfb.source.connect(self.fifo.sink)
+        self.submodules.buffer = ClockDomainsRenamer("sd")(stream.Buffer(self.datarfb.source.description))
+        self.comb += self.datarfb.source.connect(self.buffer.sink)
 
         dtimeout = Signal(32)
 
@@ -267,7 +269,7 @@ class SDPHYDATAR(Module):
             pads.data.oe.eq(0),
             pads.clk.eq(1),
             datarfb_reset.eq(1),
-            self.fifo.source.ready.eq(1),
+            self.buffer.source.ready.eq(1),
             If(sink.valid,
                 NextValue(dtimeout, 0),
                 NextValue(read, 0),
@@ -283,7 +285,7 @@ class SDPHYDATAR(Module):
             pads.data.oe.eq(0),
             pads.clk.eq(1),
             NextValue(dtimeout, dtimeout + 1),
-            If(self.fifo.source.valid,
+            If(self.buffer.source.valid,
                 NextState("DATA_READ")
             ).Elif(dtimeout > cfg.datatimeout,
                 NextState("TIMEOUT")
@@ -293,11 +295,11 @@ class SDPHYDATAR(Module):
         fsm.act("DATA_READ",
             pads.data.oe.eq(0),
             pads.clk.eq(1),
-            source.valid.eq(self.fifo.source.valid),
-            source.data.eq(self.fifo.source.data),
+            source.valid.eq(self.buffer.source.valid),
+            source.data.eq(self.buffer.source.data),
             source.status.eq(SDCARD_STREAM_STATUS_OK),
             source.last.eq(read == (toread - 1)),
-            self.fifo.source.ready.eq(source.ready),
+            self.buffer.source.ready.eq(source.ready),
             If(source.valid & source.ready,
                 NextValue(read, read + 1),
                 If(read == (toread - 1),
@@ -314,8 +316,8 @@ class SDPHYDATAR(Module):
         fsm.act("DATA_FLUSH",
             pads.data.oe.eq(0),
             datarfb_reset.eq(1),
-            self.fifo.source.ready.eq(1),
-            If(cnt < 4,
+            self.buffer.source.ready.eq(1),
+            If(cnt < 5,
                 NextValue(cnt, cnt + 1),
             ).Else(
                 NextValue(cnt, 0),
@@ -390,12 +392,12 @@ class SDPHYCRCRFB(Module):
             )
         )
         fsm.act("CHECK",
-            If(data == 0b010,
-                valid.eq(1),
-                error.eq(0),
-            ).Else(
+            If(data == 0b101,
                 valid.eq(0),
-                error.eq(1)
+                error.eq(1),
+            ).Else(
+                valid.eq(1),
+                error.eq(0)
             ),
             NextState("IDLE")
         )
@@ -501,7 +503,7 @@ class SDPHYDATAW(Module):
 
 
 class SDPHYIOS6(Module):
-    def __init__(self, sdpads, pads):
+    def __init__(self, sdpads, pads, ddr_alignment="C0"):
         # Data tristate
         self.data_t = TSTriple(4)
         self.specials += self.data_t.get_tristate(pads.data)
@@ -515,9 +517,11 @@ class SDPHYIOS6(Module):
             self.specials += Instance("IBUFG", i_I=pads.clkfb, o_O=ClockSignal("sd_fb"))
 
         # Clk output
+        sdpads_clk = Signal()
+        self.sync.sd += sdpads_clk.eq(sdpads.clk)
         self.specials += Instance("ODDR2", p_DDR_ALIGNMENT="NONE",
             p_INIT=1, p_SRTYPE="SYNC",
-            i_D0=0, i_D1=sdpads.clk, i_S=0, i_R=0, i_CE=1,
+            i_D0=0, i_D1=sdpads_clk, i_S=0, i_R=0, i_CE=1,
             i_C0=ClockSignal("sd"), i_C1=~ClockSignal("sd"),
             o_Q=pads.clk
         )
@@ -525,7 +529,7 @@ class SDPHYIOS6(Module):
         # Cmd input DDR
         cmd = Signal(2)
         self.specials += Instance("IDDR2",
-            p_DDR_ALIGNMENT="C0", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
+            p_DDR_ALIGNMENT=ddr_alignment, p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
             i_C0=ClockSignal("sd_fb"), i_C1=~ClockSignal("sd_fb"),
             i_CE=1, i_S=0, i_R=0,
             i_D=self.cmd_t.i, o_Q0=cmd[0], o_Q1=cmd[1]
@@ -538,8 +542,9 @@ class SDPHYIOS6(Module):
         # Data input DDR
         for i in range(4):
             data = Signal(2)
+            data_r = Signal(2)
             self.specials += Instance("IDDR2",
-                p_DDR_ALIGNMENT="C0", p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
+                p_DDR_ALIGNMENT=ddr_alignment, p_INIT_Q0=0, p_INIT_Q1=0, p_SRTYPE="ASYNC",
                 i_C0=ClockSignal("sd_fb"), i_C1=~ClockSignal("sd_fb"),
                 i_CE=1, i_S=0, i_R=0,
                 i_D=self.data_t.i[i], o_Q0=data[0], o_Q1=data[1]
@@ -588,7 +593,7 @@ class SDPHYIOS7(Module):
 
 
 class SDPHY(Module, AutoCSR):
-    def __init__(self, pads, device):
+    def __init__(self, pads, device, **kwargs):
         self.sink = sink = stream.Endpoint([("data", 8), ("cmd_data_n", 1), ("rd_wr_n", 1)])
         self.source = source = stream.Endpoint([("data", 8), ("status", 3)])
         if hasattr(pads, "sel"):
@@ -626,25 +631,18 @@ class SDPHY(Module, AutoCSR):
         else:
             # real phy
             if device[:3] == "xc6":
-                self.submodules.io = io = SDPHYIOS6(sdpads, pads)
-                self.comb += [
-                    io.cmd_t.oe.eq(sdpads.cmd.oe),
-                    io.cmd_t.o.eq(sdpads.cmd.o),
-
-                    io.data_t.oe.eq(sdpads.data.oe),
-                    io.data_t.o.eq(sdpads.data.o)
-                ]
+                self.submodules.io = io = SDPHYIOS6(sdpads, pads, **kwargs)
             elif device[:3] == "xc7":
-                self.submodules.io = io = SDPHYIOS7(sdpads, pads)
-                self.sync.sd += [
-                    io.cmd_t.oe.eq(sdpads.cmd.oe),
-                    io.cmd_t.o.eq(sdpads.cmd.o),
-
-                    io.data_t.oe.eq(sdpads.data.oe),
-                    io.data_t.o.eq(sdpads.data.o)
-                ]
+                self.submodules.io = io = SDPHYIOS7(sdpads, pads, **kwargs)
             else:
                 raise NotImplementedError
+            self.sync.sd += [
+                io.cmd_t.oe.eq(sdpads.cmd.oe),
+                io.cmd_t.o.eq(sdpads.cmd.o),
+
+                io.data_t.oe.eq(sdpads.data.oe),
+                io.data_t.o.eq(sdpads.data.o)
+            ]
 
         # PHY submodules
         self.submodules.cfg = cfg = SDPHYCFG()
